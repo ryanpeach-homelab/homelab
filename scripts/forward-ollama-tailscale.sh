@@ -28,7 +28,7 @@ fi
 
 echo "==> 1. Making ollama accept the forwarded hostname (listen on all interfaces)"
 mkdir -p /etc/systemd/system/ollama.service.d
-cat > /etc/systemd/system/ollama.service.d/override.conf <<EOF
+cat >/etc/systemd/system/ollama.service.d/override.conf <<EOF
 [Service]
 Environment="OLLAMA_HOST=0.0.0.0:${OLLAMA_PORT}"
 EOF
@@ -40,7 +40,7 @@ echo "==> 2. Restricting port ${OLLAMA_PORT} to the ${TS_IFACE} interface only"
 # Order matters: the interface-specific allow is added first so it wins for
 # tailnet traffic; the broad deny then blocks ${OLLAMA_PORT} everywhere else.
 ufw allow in on "${TS_IFACE}" to any port "${OLLAMA_PORT}" proto tcp
-ufw deny  in                  to any port "${OLLAMA_PORT}" proto tcp
+ufw deny in to any port "${OLLAMA_PORT}" proto tcp
 
 echo
 echo "==> Firewall status:"
