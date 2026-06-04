@@ -1,0 +1,24 @@
+# Pre-commit hooks. Enable locally with `pre-commit install` — or just run
+# `nix develop`, which installs the hook automatically.
+#
+# Only published, upstream hooks are used here. Nix-specific linters (statix,
+# deadnix) have no published pre-commit hook, so they run in CI instead
+# (.github/workflows/lint.yml).
+repos:
+  # Generic formatting / hygiene basics.
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+      - id: mixed-line-ending
+        args: [--fix=lf]
+
+  # Secret scanning.
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.18.4
+    hooks:
+      - id: gitleaks

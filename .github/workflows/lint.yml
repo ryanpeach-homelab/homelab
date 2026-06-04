@@ -1,0 +1,42 @@
+name: Lint
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: lint-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Runs the published pre-commit hooks (.pre-commit-config.yaml) the same way
+  # developers do locally.
+  pre-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      - uses: pre-commit/action@v3.0.1
+
+  # Nix-specific checks that have no published pre-commit hook, plus a full-repo
+  # gitleaks scan run directly (no paid action). The pre-commit gitleaks hook
+  # only scans staged changes, so this is the real secret gate in CI.
+  nix-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: cachix/install-nix-action@v30
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+      - name: statix (nix anti-pattern lint)
+        run: nix run nixpkgs#statix -- check .
+      - name: deadnix (unused nix code)
+        run: nix run nixpkgs#deadnix -- --fail .
+      - name: gitleaks (full repo + history scan)
+        run: nix run nixpkgs#gitleaks -- detect --no-banner --redact --verbose --source .
