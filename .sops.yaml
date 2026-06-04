@@ -1,0 +1,38 @@
+# sops creation rules: which age recipients can decrypt which files.
+#
+# Populate the keys below, then encrypt with `sops secrets/<file>.yaml`.
+#
+# Get a host's age recipient from its SSH ed25519 *public* host key:
+#   ssh-keyscan <host> 2>/dev/null | ssh-to-age
+#   # or, on the host itself:
+#   ssh-to-age -i /etc/ssh/ssh_host_ed25519_key.pub
+#
+# Get your personal admin recipient from your age key:
+#   age-keygen -o ~/.config/sops/age/keys.txt   # one-time; prints age1... public key
+
+keys:
+  # Replace these placeholders with real age recipients (age1...).
+  - &admin    age1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxadmin
+  - &mini     age1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxmini0
+  - &pi1      age1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxpi100
+
+creation_rules:
+  # Secrets every host needs.
+  - path_regex: secrets/common\.yaml$
+    key_groups:
+      - age:
+          - *admin
+          - *mini
+          - *pi1
+
+  # Per-host secrets: secrets/<hostname>.yaml decrypts only on that host.
+  - path_regex: secrets/rgpeach10-mini\.yaml$
+    key_groups:
+      - age:
+          - *admin
+          - *mini
+  - path_regex: secrets/rgpeach10-pi1\.yaml$
+    key_groups:
+      - age:
+          - *admin
+          - *pi1

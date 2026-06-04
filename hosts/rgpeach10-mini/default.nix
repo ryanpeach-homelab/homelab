@@ -8,9 +8,8 @@
   boot.loader.efi.canTouchEfiVariables = true;
 
   # --- ollama, exposed only over the tailnet --------------------------------
-  # NixOS-native replacement for scripts/forward-ollama-tailscale.sh: ollama
-  # listens on all interfaces but the firewall only opens 11434 on tailscale0,
-  # so it is reachable on the tailnet and never on the LAN.
+  # ollama listens on all interfaces but the firewall only opens 11434 on
+  # tailscale0, so it is reachable on the tailnet and never on the LAN.
   services.ollama = {
     enable = true;
     host = "0.0.0.0";

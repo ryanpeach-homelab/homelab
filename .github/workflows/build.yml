@@ -42,5 +42,13 @@ jobs:
 
       - name: Build ${{ matrix.host }} system closure
         run: |
-          nix build -L --no-link \
+          nix build -L --out-link result \
             ".#nixosConfigurations.${{ matrix.host }}.config.system.build.toplevel"
+
+      # Fast PR-time CVE scan: reuses the closure we just built (no rebuild),
+      # so the only added cost is the NVD feed fetch. Non-blocking — a NixOS
+      # closure almost always carries some open CVEs, so this reports findings
+      # without gating the merge. Tighten with a vulnix whitelist if desired.
+      - name: Scan closure for known CVEs (vulnix)
+        continue-on-error: true
+        run: nix run nixpkgs#vulnix -- --requisites ./result

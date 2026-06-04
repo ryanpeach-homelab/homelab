@@ -1,0 +1,34 @@
+name: Lint
+
+# Runs the same pre-commit hooks developers use, plus a full-repo secret scan.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: lint-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pre-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history so gitleaks can scan every commit, not just the tip.
+          fetch-depth: 0
+
+      - uses: cachix/install-nix-action@v30
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      # Run the configured pre-commit hooks across the whole tree.
+      - name: pre-commit run --all-files
+        run: nix develop --command pre-commit run --all-files --show-diff-on-failure
+
+      # The pre-commit gitleaks hook only scans *staged* changes, which is a
+      # no-op in CI; this does the full repo + history scan that gates merges.
+      - name: gitleaks full scan
+        run: nix develop --command gitleaks detect --redact --verbose --source .

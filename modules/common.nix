@@ -2,7 +2,6 @@
 {
   config,
   lib,
-  pkgs,
   flakeUrl,
   ...
 }:
@@ -45,15 +44,42 @@
   # --- Remote access --------------------------------------------------------
   services.tailscale.enable = true;
 
+  # SSH is enabled on every host (this module is imported by all of them).
   services.openssh = {
     enable = true;
+    openFirewall = true; # allow port 22 through the firewall
     settings = {
       PasswordAuthentication = false;
       KbdInteractiveAuthentication = false;
     };
+    # Ensure an ed25519 host key exists — used both for SSH and to derive each
+    # host's sops/age decryption key (see Secrets below).
+    hostKeys = [
+      {
+        path = "/etc/ssh/ssh_host_ed25519_key";
+        type = "ed25519";
+      }
+      {
+        path = "/etc/ssh/ssh_host_rsa_key";
+        type = "rsa";
+        bits = 4096;
+      }
+    ];
   };
 
   networking.firewall.enable = true;
+
+  # --- Secrets (sops-nix) ---------------------------------------------------
+  # Each host decrypts secrets with an age key derived from its SSH ed25519
+  # host key, so there is no separate key to distribute. Encrypt secrets with
+  # the recipients listed in .sops.yaml, then declare them, e.g.:
+  #
+  #   sops.defaultSopsFile = ../secrets/common.yaml;
+  #   sops.secrets."my-token" = { };          # -> /run/secrets/my-token
+  #   sops.secrets."svc-pw".owner = "someuser";
+  #
+  # See secrets/README.md for the full workflow.
+  sops.age.sshKeyPaths = [ "/etc/ssh/ssh_host_ed25519_key" ];
 
   # --- Admin user -----------------------------------------------------------
   users.users.rgpeach10 = {

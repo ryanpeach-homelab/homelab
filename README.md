@@ -24,13 +24,35 @@ attribute set). Add a host by adding an entry there and a directory under
 ## Layout
 
 ```
-flake.nix                     # nixosConfigurations + CI checks for every host
-modules/common.nix            # shared config: nix, auto-upgrade, ssh, tailscale, user
-hosts/<host>/default.nix      # per-host config
+flake.nix                       # nixosConfigurations, CI checks, dev shell
+modules/common.nix              # shared: nix, auto-upgrade, ssh, tailscale, sops, user
+hosts/<host>/default.nix        # per-host config
 hosts/<host>/hardware-configuration.nix
-.github/workflows/build.yml   # builds each host on PRs and main
-scripts/                      # legacy imperative scripts (being migrated into nix)
+secrets/                        # sops-encrypted secrets (see secrets/README.md)
+.sops.yaml                      # sops creation rules (age recipients per file)
+.pre-commit-config.yaml         # gitleaks + statix + deadnix hooks
+.github/workflows/build.yml     # builds + CVE-scans each host on PRs and main
+.github/workflows/lint.yml      # runs the pre-commit hooks + full gitleaks scan
 ```
+
+## Dev shell, linting & secret scanning
+
+`nix develop` drops you into a shell with `pre-commit`, `gitleaks`, `statix`,
+`deadnix`, `sops`, `age`, and `ssh-to-age`, and installs the git pre-commit
+hook automatically. The hooks (also run in CI via `lint.yml`):
+
+- **gitleaks** — blocks commits/PRs containing secrets.
+- **statix** — flags Nix anti-patterns.
+- **deadnix** — flags dead/unused Nix code.
+
+CI additionally runs a full-repo `gitleaks detect`, and each host build is
+CVE-scanned with **vulnix** (non-blocking, reported on the PR).
+
+## Secrets
+
+Managed with [sops-nix](https://github.com/Mic92/sops-nix); each host decrypts
+using an age key derived from its SSH host key. See
+[`secrets/README.md`](secrets/README.md).
 
 ## First-time setup
 
