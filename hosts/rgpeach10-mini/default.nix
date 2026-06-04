@@ -25,8 +25,16 @@ in
     ];
   };
 
+  # --- MagicDNS name --------------------------------------------------------
+  # Advertise this node to the tailnet as `ollama` (the OS hostname stays
+  # `rgpeach10-mini` for the flake). MagicDNS then resolves it as
+  # `ollama.<tailnet>.ts.net`, and `tailscale serve` issues its TLS cert for
+  # that name. `tailscale set` is non-destructive (unlike `up`), so this only
+  # changes the hostname and runs on every activation.
+  services.tailscale.extraSetFlags = [ "--hostname=ollama" ];
+
   # --- Expose ollama on the tailnet via `tailscale serve` -------------------
-  # Proxies https://<host>.<tailnet>.ts.net/ -> http://127.0.0.1:11434 so the
+  # Proxies https://ollama.<tailnet>.ts.net/ -> http://127.0.0.1:11434 so the
   # ollama API is reachable over HTTPS on the tailnet (with an automatic
   # Tailscale cert) and never on the LAN. Requires HTTPS certificates /
   # MagicDNS to be enabled for the tailnet in the admin console.
@@ -34,10 +42,12 @@ in
     description = "tailscale serve: expose ollama over the tailnet (HTTPS 443 -> 11434)";
     after = [
       "tailscaled.service"
+      "tailscaled-set.service"
       "ollama.service"
     ];
     wants = [
       "tailscaled.service"
+      "tailscaled-set.service"
       "ollama.service"
     ];
     wantedBy = [ "multi-user.target" ];
