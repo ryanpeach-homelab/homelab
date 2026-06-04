@@ -37,16 +37,26 @@ secrets/                        # sops-encrypted secrets (see secrets/README.md)
 
 ## Dev shell, linting & secret scanning
 
-`nix develop` drops you into a shell with `pre-commit`, `gitleaks`, `statix`,
-`deadnix`, `sops`, `age`, and `ssh-to-age`, and installs the git pre-commit
-hook automatically. The hooks (also run in CI via `lint.yml`):
+`nix develop` drops you into a shell with the secrets + lint tooling and
+installs the git pre-commit hook automatically.
 
-- **gitleaks** — blocks commits/PRs containing secrets.
-- **statix** — flags Nix anti-patterns.
-- **deadnix** — flags dead/unused Nix code.
+**Pre-commit** (`.pre-commit-config.yaml`, published upstream hooks only; also
+run in CI by `lint.yml`):
 
-CI additionally runs a full-repo `gitleaks detect`, and each host build is
-CVE-scanned with **vulnix** (non-blocking, reported on the PR).
+- [`pre-commit/pre-commit-hooks`](https://github.com/pre-commit/pre-commit-hooks)
+  — trailing whitespace, end-of-file, line endings, large files, etc.
+- [`gitleaks`](https://github.com/gitleaks/gitleaks) — blocks commits containing
+  secrets (scans staged changes).
+
+**CI-only checks** (`lint.yml`, run directly — no paid actions):
+
+- **statix** / **deadnix** — Nix anti-patterns and dead code (no published
+  pre-commit hook, so they run in CI).
+- **gitleaks detect** — full repo + history secret scan (the pre-commit hook
+  only covers staged changes).
+
+Each host build is also CVE-scanned with **vulnix** (non-blocking, reported on
+the PR).
 
 ## Secrets
 

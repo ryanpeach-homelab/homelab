@@ -1,28 +1,24 @@
 # Pre-commit hooks. Enable locally with `pre-commit install` — or just run
 # `nix develop`, which installs the hook automatically.
 #
-# The gitleaks hook is a `system` hook: it calls the gitleaks binary on PATH
-# (provided by the dev shell and by CI), so there is no Go build step.
+# Only published, upstream hooks are used here. Nix-specific linters (statix,
+# deadnix) have no published pre-commit hook, so they run in CI instead
+# (.github/workflows/lint.yml).
 repos:
-  - repo: local
+  # Generic formatting / hygiene basics.
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
     hooks:
-      # --- Security: secret scanning ---
-      - id: gitleaks
-        name: gitleaks (scan staged changes for secrets)
-        description: Detect hardcoded secrets before they are committed.
-        entry: gitleaks protect --staged --redact --verbose
-        language: system
-        pass_filenames: false
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+      - id: mixed-line-ending
+        args: [--fix=lf]
 
-      # --- Nix linting ---
-      - id: statix
-        name: statix (nix anti-pattern lint)
-        entry: statix check
-        language: system
-        pass_filenames: false
-        types: [nix]
-      - id: deadnix
-        name: deadnix (unused nix code)
-        entry: deadnix --fail
-        language: system
-        types: [nix]
+  # Secret scanning.
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.18.4
+    hooks:
+      - id: gitleaks

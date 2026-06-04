@@ -67,6 +67,7 @@
           default = pkgs.mkShell {
             packages = [
               pkgs.pre-commit
+              pkgs.go # builds the published gitleaks pre-commit hook
               pkgs.gitleaks
               pkgs.statix
               pkgs.deadnix
