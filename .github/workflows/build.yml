@@ -1,0 +1,46 @@
+name: Build NixOS hosts
+
+# Validate that every host's system closure builds. This runs on PRs (the gate
+# before merge) and on pushes to main (the source of truth hosts pull from).
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# Cancel superseded runs on the same ref to save CI minutes.
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: build ${{ matrix.host }} (${{ matrix.system }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - host: rgpeach10-mini
+            system: x86_64-linux
+          - host: rgpeach10-pi1
+            system: aarch64-linux
+    steps:
+      - uses: actions/checkout@v4
+
+      # aarch64 hosts are built under emulation on the x86_64 runner.
+      - name: Enable aarch64 emulation
+        if: matrix.system == 'aarch64-linux'
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - uses: cachix/install-nix-action@v30
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            extra-platforms = aarch64-linux
+
+      - name: Build ${{ matrix.host }} system closure
+        run: |
+          nix build -L --no-link \
+            ".#nixosConfigurations.${{ matrix.host }}.config.system.build.toplevel"
