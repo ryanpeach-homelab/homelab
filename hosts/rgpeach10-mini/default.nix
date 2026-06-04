@@ -29,8 +29,15 @@
   #    autoPrune periodically runs `docker system prune` to clear stopped
   #    containers and dangling images so leftovers don't pile up. Note: it
   #    only reaps *stopped* containers — a still-running one is untouched.
+  #
+  #    enableOnBoot = false keeps dockerd from starting at boot; it
+  #    socket-activates the first time something uses the Docker socket (a
+  #    `docker` command, or VSCode connecting). So nothing runs unless you're
+  #    actively using it, and even `--restart=always` containers don't quietly
+  #    come back after a reboot — the daemon isn't up to restart them.
   virtualisation.docker = {
     enable = true;
+    enableOnBoot = false;
     autoPrune.enable = true;
   };
 
@@ -49,6 +56,20 @@
     pkgs.git
     pkgs.gh
   ];
+
+  # --- Automatic reboots for kernel/initrd updates --------------------------
+  # Opt in to rebooting from the daily auto-upgrade (common.nix defaults it
+  # off). This only reboots when the kernel/initrd actually change — not every
+  # night — and only inside the window below, which brackets the 04:00 upgrade.
+  # Combined with docker's enableOnBoot = false above, a reboot also cleanly
+  # drops any containers that were left running.
+  system.autoUpgrade = {
+    allowReboot = true;
+    rebootWindow = {
+      lower = "03:00";
+      upper = "06:00";
+    };
+  };
 
   # Should match the NixOS version this host was originally installed with.
   system.stateVersion = "25.05";
