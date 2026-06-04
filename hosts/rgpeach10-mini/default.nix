@@ -25,7 +25,14 @@
   #    Docker daemon to build/run the container; the docker-in-docker feature
   #    then runs a nested dockerd *inside* that container, which works because
   #    the standard daemon allows the privileged container it needs.
-  virtualisation.docker.enable = true;
+  #
+  #    autoPrune periodically runs `docker system prune` to clear stopped
+  #    containers and dangling images so leftovers don't pile up. Note: it
+  #    only reaps *stopped* containers — a still-running one is untouched.
+  virtualisation.docker = {
+    enable = true;
+    autoPrune.enable = true;
+  };
 
   # 2. nix-ld. The VSCode Remote-SSH "server" is a prebuilt, dynamically
   #    linked Node binary; on NixOS it won't start without a dynamic loader.
