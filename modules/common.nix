@@ -2,6 +2,7 @@
 {
   config,
   lib,
+  pkgs,
   flakeUrl,
   ...
 }:
@@ -51,30 +52,65 @@
   # the 2min delay is just slack for tailscale/DNS to settle before the pull.
   systemd.timers.nixos-upgrade.timerConfig.OnBootSec = "2min";
 
-  # --- Remote access --------------------------------------------------------
-  services.tailscale.enable = true;
+  # --- Services -------------------------------------------------------------
+  services = {
+    # Remote access over the tailnet.
+    tailscale.enable = true;
 
-  # SSH is enabled on every host (this module is imported by all of them).
-  services.openssh = {
-    enable = true;
-    openFirewall = true; # allow port 22 through the firewall
-    settings = {
-      PasswordAuthentication = false;
-      KbdInteractiveAuthentication = false;
+    # SSH is enabled on every host (this module is imported by all of them).
+    openssh = {
+      enable = true;
+      openFirewall = true; # allow port 22 through the firewall
+      settings = {
+        PasswordAuthentication = false;
+        KbdInteractiveAuthentication = false;
+      };
+      # Ensure an ed25519 host key exists — used both for SSH and to derive each
+      # host's sops/age decryption key (see Secrets below).
+      hostKeys = [
+        {
+          path = "/etc/ssh/ssh_host_ed25519_key";
+          type = "ed25519";
+        }
+        {
+          path = "/etc/ssh/ssh_host_rsa_key";
+          type = "rsa";
+          bits = 4096;
+        }
+      ];
     };
-    # Ensure an ed25519 host key exists — used both for SSH and to derive each
-    # host's sops/age decryption key (see Secrets below).
-    hostKeys = [
-      {
-        path = "/etc/ssh/ssh_host_ed25519_key";
-        type = "ed25519";
-      }
-      {
-        path = "/etc/ssh/ssh_host_rsa_key";
-        type = "rsa";
-        bits = 4096;
-      }
-    ];
+
+    # --- Synology NAS (NFS, all shares, on-demand) --------------------------
+    # autofs wildcard map: accessing /mnt/nas/<name> automounts
+    # <NAS>:/volume1/<name> on demand, so *every* shared folder is reachable
+    # without listing them here. Mounts are made lazily on first access and
+    # unmounted after 10 min idle, so a host never blocks boot (or hangs) if
+    # the NAS is offline. No credentials are needed for NFS.
+    #
+    # Synology exports each shared folder individually (there is no `/volume1`
+    # export), so for a folder to actually mount it must have an NFS rule
+    # permitting this host: Control Panel → Shared Folder → <share> → Edit →
+    # NFS Permissions → add the host's IP/subnet (or the tailnet range
+    # 100.64.0.0/10 if mounting over Tailscale).
+    #
+    # Note: a wildcard automount can't be browsed with `ls /mnt/nas` — you
+    # have to reference a folder by name (e.g. `cd /mnt/nas/photos`) to
+    # trigger it.
+    #
+    # Set <NAS> below to the NAS address, e.g. "synology.<tailnet>.ts.net" or
+    # a LAN IP like "192.168.1.20".
+    autofs = {
+      enable = true;
+      autoMaster =
+        let
+          nasMap = pkgs.writeText "auto.nas" ''
+            * -fstype=nfs4,rw,nfsvers=4.1,soft <NAS>:/volume1/&
+          '';
+        in
+        ''
+          /mnt/nas file:${nasMap} --timeout=600
+        '';
+    };
   };
 
   networking.firewall.enable = true;
