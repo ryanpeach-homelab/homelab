@@ -1,0 +1,22 @@
+version: "3.9"
+services:
+  vault:
+    image: hashicorp/vault:latest
+    container_name: Vault
+    hostname: vault
+    mem_limit: 512m
+    cpu_shares: 768
+    security_opt:
+      - no-new-privileges:true
+    cap_add:
+      - IPC_LOCK
+    entrypoint: vault server -config=/vault/config/config.hcl
+    ports:
+      - 11200:8200
+    volumes:
+      - /volume1/docker/vault/logs:/vault/logs:rw
+      - /volume1/docker/vault/data:/vault/file:rw
+      - ./config:/vault/config:rw
+      - /volume1/docker/vault/plugins:/vault/plugins:rw
+      - /etc/localtime:/etc/localtime:ro
+    restart: always
