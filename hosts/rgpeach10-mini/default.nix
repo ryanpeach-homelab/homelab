@@ -8,6 +8,7 @@ in
   imports = [
     ./hardware-configuration.nix
     ./super-productivity.nix
+    ./supersync.nix
   ];
 
   # EFI / systemd-boot.

@@ -12,9 +12,11 @@
 #                             the proxy as a child process (the proxy image ships
 #                             python3 + pip, so this works inside the container).
 #
-# The proxy is published to the public internet with `tailscale funnel`, so
-# GitHub OAuth (configured via the sops secret below) is what keeps it locked
-# down. super-productivity itself is never funnelled — it stays on the tailnet.
+# The proxy is published to the public internet on its own Tailscale node — a
+# Funnel sidecar container (see ts-funnel.nix) at https://mcp.<tailnet>.ts.net —
+# so it no longer spends the host node's scarce Funnel ports. GitHub OAuth
+# (configured via the sops secret below) is what keeps it locked down.
+# super-productivity itself is never funnelled — it stays on the tailnet.
 #
 # Why podman (not the docker engine that hosts/rgpeach10-mini/default.nix
 # enables): that docker daemon is deliberately `enableOnBoot = false` for the
@@ -29,17 +31,19 @@
   ...
 }:
 let
-  # Host-side ports the containers publish on loopback only (never on the LAN;
-  # tailscale serve/funnel are the only things that reach them).
-  spPort = 3210; # super-productivity web  (container :80)
-  proxyPort = 9000; # mcp-auth-proxy          (container :80)
+  funnel = import ./ts-funnel.nix { inherit pkgs; };
 
-  # tailscale serve/funnel HTTPS ports. The mini already runs `tailscale serve`
-  # for ollama on 443 (see default.nix), and a node shares one set of serve
-  # ports — so super-productivity's private serve uses 10000 and the public MCP
-  # funnel uses 8443 (both valid Funnel ports; the trio is 443/8443/10000).
+  # Host-side port the super-productivity web container publishes on loopback
+  # (never on the LAN; tailscale serve is the only thing that reaches it).
+  spPort = 3210; # super-productivity web  (container :80)
+
+  # tailscale serve HTTPS port for the *private* SP web app. ollama serve owns
+  # :443 on the host node (default.nix); a node shares one set of serve ports,
+  # so the SP serve uses 10000 (the trio is 443/8443/10000). The MCP proxy no
+  # longer uses the host funnel — it has its own Tailscale node (ts-mcp), so it
+  # gets a clean https://mcp.<tailnet>.ts.net:443 and frees the host's 8443 slot.
   serveHttpsPort = 10000;
-  funnelHttpsPort = 8443;
+  podmanNetwork = "mcp"; # podman network shared by mcp-auth-proxy + ts-mcp
 
   # Both images are pulled from registries (not built on-host): super-productivity
   # from Docker Hub (the fork's CI publishes it) and mcp-auth-proxy from upstream's
@@ -102,16 +106,23 @@ let
     set -u
     mkdir -p /var/lib/mcp-auth-proxy/data
     ${waitForTailscale}
-    dnsname=$(${ts} status --json | ${jq} -r '.Self.DNSName | rtrimstr(".")')
-    ext="https://$dnsname:${toString funnelHttpsPort}"
+    # The proxy now lives on its own Tailscale node (ts-mcp), published at
+    # https://mcp.<tailnet>.ts.net:443. Derive that from the *host* node's
+    # MagicDNS suffix (ollama.<tailnet>.ts.net -> <tailnet>.ts.net), so the
+    # tailnet is never hard-coded. NOTE: this origin changed from the old
+    # ollama:8443 funnel — update the GitHub OAuth app's callback URL to match.
+    suffix=$(${ts} status --json | ${jq} -r '.Self.DNSName | rtrimstr(".") | sub("^[^.]+\\.";"")')
+    ext="https://mcp.$suffix"
     echo "mcp-auth-proxy external URL: $ext" >&2
 
+    # The ts-mcp sidecar reaches the proxy by container name over the `mcp`
+    # podman network, so no host port publish is needed.
     # --listen :80   : serve plain HTTP inside the container
     # --no-auto-tls  : funnel terminates TLS, so don't provision Let's Encrypt
     # -- sh ...      : the stdio MCP server the proxy authenticates in front of
     #                  (organicmoron/SP-MCP, bootstrapped by the script above)
     exec ${podman} run --rm --name mcp-auth-proxy \
-      -p 127.0.0.1:${toString proxyPort}:80 \
+      --network=${podmanNetwork} \
       -v /var/lib/mcp-auth-proxy/data:/data \
       -v ${spMcpBootstrap}:/usr/local/bin/sp-mcp-bootstrap:ro \
       -e DATA_PATH=/data \
@@ -143,14 +154,13 @@ in
   # podman as a daemonless container runtime for the long-running services.
   virtualisation.podman.enable = true;
 
-  # serve/funnel terminate TLS on these ports on the tailscale0 interface, so
-  # the firewall has to let them through there (the same reason default.nix
-  # opens 443 for the ollama serve; this option is list-valued, so the two
-  # definitions merge). Funnel ingress also lands on tailscale0.
-  networking.firewall.interfaces."tailscale0".allowedTCPPorts = [
-    funnelHttpsPort
-    serveHttpsPort
-  ];
+  # The SP web app's `tailscale serve` terminates TLS on this port on the
+  # tailscale0 interface, so the firewall has to let it through there (the same
+  # reason default.nix opens 443 for the ollama serve; this option is
+  # list-valued, so the two definitions merge). The MCP Funnel no longer needs a
+  # host port: its sidecar (ts-mcp) handles ingress in userspace, inside the
+  # container — see ts-funnel.nix.
+  networking.firewall.interfaces."tailscale0".allowedTCPPorts = [ serveHttpsPort ];
 
   # GitHub OAuth credentials for the proxy, decrypted to
   # /run/secrets/mcp-auth-proxy-env as a systemd EnvironmentFile (dotenv:
@@ -183,7 +193,7 @@ in
       };
     };
 
-    # --- mcp-auth-proxy + SP-MCP (public via funnel) -----------------------
+    # --- mcp-auth-proxy + SP-MCP (public via its own Tailscale node) -------
     mcp-auth-proxy = {
       description = "mcp-auth-proxy (upstream image) wrapping organicmoron/SP-MCP";
       wantedBy = [ "multi-user.target" ];
@@ -193,12 +203,14 @@ in
         "network-online.target"
         "tailscaled.service"
         "tailscaled-set.service"
+        "podman-network-${podmanNetwork}.service"
       ];
       wants = [
         "network-online.target"
         "tailscaled.service"
         "tailscaled-set.service"
       ];
+      requires = [ "podman-network-${podmanNetwork}.service" ];
 
       preStart = pullImage proxyImage "mcp-auth-proxy";
 
@@ -241,32 +253,18 @@ in
       preStop = "${ts} serve --https=${toString serveHttpsPort} off || true";
     };
 
-    # --- tailscale funnel: mcp-auth-proxy, public internet -----------------
-    # Prerequisites on the tailnet (one-time, in the admin console): HTTPS
-    # certificates + MagicDNS enabled, and Funnel allowed for this node in the
-    # ACL policy (the `nodeAttrs` / `funnel` attribute).
-    ts-funnel-mcp-auth-proxy = {
-      description = "Expose mcp-auth-proxy to the public internet (tailscale funnel)";
-      wantedBy = [ "multi-user.target" ];
-      after = [
-        "tailscaled.service"
-        "tailscaled-set.service"
-        "mcp-auth-proxy.service"
-      ];
-      wants = [
-        "tailscaled.service"
-        "tailscaled-set.service"
-      ];
-
-      serviceConfig = {
-        Type = "oneshot";
-        RemainAfterExit = true;
-      };
-      script = ''
-        ${waitForTailscale}
-        ${ts} funnel --bg --https=${toString funnelHttpsPort} http://127.0.0.1:${toString proxyPort}
-      '';
-      preStop = "${ts} funnel --https=${toString funnelHttpsPort} off || true";
+    # --- mcp-auth-proxy's own Tailscale node (public via Funnel) -----------
+    # Instead of the host funnel (capped at 443/8443/10000 per node), the proxy
+    # gets its own node via a sidecar container that Funnels :443 ->
+    # http://mcp-auth-proxy:80 over the `mcp` podman network. Prerequisites: see
+    # ts-funnel.nix (MagicDNS + HTTPS certs, a Funnel-allowed tag, and the
+    # tailscale-authkey sops secret).
+    "podman-network-${podmanNetwork}" = funnel.mkNetworkUnit podmanNetwork;
+    ts-mcp = funnel.mkSidecarUnit {
+      hostname = "mcp";
+      network = podmanNetwork;
+      target = "http://mcp-auth-proxy:80";
+      extraAfter = [ "mcp-auth-proxy.service" ];
     };
   };
 }

@@ -106,7 +106,7 @@ daemon, which is `enableOnBoot = false` for the devcontainer workflow):
 | Piece                      | Source                                 | Exposure                                            |
 | -------------------------- | -------------------------------------- | --------------------------------------------------- |
 | `super-productivity` (web) | Docker Hub `rgpeach10/super-productivity` (published by the fork's CI) | `tailscale serve`, HTTPS **:10000**, tailnet-only |
-| `mcp-auth-proxy`           | GHCR `ghcr.io/sigbit/mcp-auth-proxy` (upstream) | `tailscale funnel`, HTTPS **:8443**, public |
+| `mcp-auth-proxy`           | GHCR `ghcr.io/sigbit/mcp-auth-proxy` (upstream) | Funnel sidecar, public at `https://mcp.<tailnet>.ts.net` (**:443**) |
 | `SP-MCP` (Python)          | `organicmoron/SP-MCP` (fetched at runtime) | wrapped by the proxy as a stdio child |
 
 Both container images are **pulled** from registries — `super-productivity`
@@ -117,21 +117,48 @@ SDK into the data volume and fetches `mcp_server.py` at startup. The box needs
 outbound access (Docker Hub / GHCR / GitHub raw / PyPI). CI here only builds the
 NixOS closure — it never runs podman — so none of this affects the merge gate.
 
-The proxy's public URL is derived at runtime from the node's MagicDNS name, so
-the tailnet is never hard-coded. The mini advertises itself as `ollama`
-(`default.nix`), so the funnel URL is `https://ollama.<tailnet>.ts.net:8443` and
-the private web app is `https://ollama.<tailnet>.ts.net:10000`.
+The private web app is served at `https://ollama.<tailnet>.ts.net:10000` (the
+mini's host node advertises itself as `ollama`, see `default.nix`). The MCP proxy
+is **public via its own Tailscale node** — see *Scaling public services* below.
+
+## Scaling public services past Funnel's port limit (mini)
+
+Tailscale **Funnel** is capped *per node*: only ports **443/8443/10000**, one of
+each. The host node spends them on the ollama and SP-web serves, so publishing
+more services that way doesn't scale. Instead, each public service gets **its own
+Tailscale node** via a Funnel **sidecar container** (`ts-funnel.nix`):
+
+- The sidecar (`ghcr.io/tailscale/tailscale`) joins the tailnet under its own
+  hostname (`mcp`, `sync`, …) in **userspace mode** — no host `tailscale0`, so it
+  never conflicts with the system tailscaled and needs no extra privileges.
+- It shares a **podman network** with the app and Funnels `:443` → the app, so
+  each service is reachable at a clean `https://<name>.<tailnet>.ts.net` (no port
+  juggling). The free plan allows **100 devices**, so this scales fine.
+- `mcp-auth-proxy` (node `mcp`) and SuperSync (node `sync`) both use this.
+
+`ts-funnel.nix` exposes `mkNetworkUnit` + `mkSidecarUnit` so adding the next
+public service is a few lines.
 
 ### One-time operator setup
 
-1. **Tailnet** (admin console): enable **MagicDNS + HTTPS certificates**, and
-   allow **Funnel** for the mini (advertised as `ollama`) in the ACL policy
-   (`nodeAttrs` → `funnel`).
+1. **Tailnet** (admin console): enable **MagicDNS + HTTPS certificates**. Create
+   a tag (e.g. `tag:funnel`) and grant it the `funnel` node attribute in the ACL
+   policy (`nodeAttrs`), then mint a **reusable + ephemeral** auth key tagged with
+   it. Store it as the `tailscale-authkey` sops secret (used by every Funnel
+   sidecar — `mcp`, `sync`, …):
+   ```yaml
+   tailscale-authkey: |
+     TS_AUTHKEY=tskey-auth-...
+   ```
+   (The host node `ollama` still also needs Funnel allowed if you keep using it.)
 2. **GitHub OAuth app** (Settings → Developer settings → OAuth Apps):
-   - Homepage URL: `https://ollama.<tailnet>.ts.net:8443`
+   - Homepage URL: `https://mcp.<tailnet>.ts.net`
    - Authorization callback URL: same origin (see the proxy logs on first start
      for the exact callback path it advertises).
    - Note the **Client ID** and generate a **Client secret**.
+   > Migrated from the old `ollama:8443` funnel: if you set this up before, the
+   > proxy's origin changed to `https://mcp.<tailnet>.ts.net` — **update the OAuth
+   > app's callback URL** or logins will fail.
 3. **Secret** — store the proxy's env as `mcp-auth-proxy-env` in the per-host
    sops file `hosts/rgpeach10-mini/secrets.yaml` (the path matches the
    `hosts/rgpeach10-mini` rule in `.sops.yaml`; the service loads it as an
@@ -157,6 +184,43 @@ the private web app is `https://ollama.<tailnet>.ts.net:10000`.
 > self-hosted web app. Hosting all three is wired up here; sharing live data
 > between them is a separate concern (e.g. pointing the plugin at the server's
 > data dir, or a sync setup).
+
+## SuperSync (mini)
+
+`hosts/rgpeach10-mini/supersync.nix` self-hosts Super Productivity's official
+sync server. SuperSync isn't WebDAV — it's an operation-based (event-sourcing)
+protocol persisted in **PostgreSQL**, so the stack is three containers on a
+shared podman network: `supersync-postgres` (`postgres:16-alpine`, the real
+data), `supersync-server` (`ghcr.io/super-productivity/supersync`, **:1900**),
+and a Funnel sidecar `ts-sync` publishing it at `https://sync.<tailnet>.ts.net`
+(**:443**, public). The sidecar replaces upstream's Caddy box — Tailscale
+terminates TLS.
+
+**Data lives on the NAS.** The Synology `super-productivity` share is mounted on
+the mini at `/mnt/nas/super-productivity` over **NFS** (with
+`x-systemd.automount` + `nofail`, so a NAS blip never wedges boot), and Postgres'
+data dir + the server's `/app/data` are bind-mounted there. NFS, not SMB:
+Postgres over SMB risks DB corruption from broken file locking.
+
+### One-time operator setup
+
+1. **NAS** (Synology): create a shared folder `super-productivity` and
+   **NFS-export** `/volume1/super-productivity` to the mini (read/write, NFSv4).
+   Postgres runs as uid 70 inside the container, so the export must let that uid
+   write — set squash to "Map all users to admin" (or chown the folder). To use
+   an IP/tailnet name instead of `nas.local`, change `device` in `supersync.nix`.
+2. **Tailscale**: same `tailscale-authkey` secret as above (the `sync` sidecar
+   reuses it).
+3. **Secret** — add to `hosts/rgpeach10-mini/secrets.yaml`:
+   ```yaml
+   supersync-env: |
+     JWT_SECRET=<32+ random chars>
+     POSTGRES_PASSWORD=<alphanumeric password>
+   ```
+   (Keep the password alphanumeric — it's embedded in `DATABASE_URL`.)
+4. **Client**: point Super Productivity's Sync at `https://sync.<tailnet>.ts.net`
+   and register the first account. Passkeys/WebAuthn bind to that origin, so use
+   the funnel URL consistently.
 
 ## Enforcing the CI gate
 
