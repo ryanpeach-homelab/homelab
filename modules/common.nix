@@ -2,6 +2,7 @@
 {
   config,
   lib,
+  pkgs,
   flakeUrl,
   ...
 }:
@@ -79,28 +80,35 @@
 
   networking.firewall.enable = true;
 
-  # --- Synology NAS (NFS, on-demand) ---------------------------------------
-  # Mounted lazily via systemd automount: the share is only mounted on first
-  # access and unmounted after a period of inactivity, so a host never blocks
-  # boot (or hangs) if the NAS is unreachable. Requires the NFS export on the
-  # Synology to permit each host's IP/subnet (Control Panel → Shared Folder →
-  # Edit → NFS Permissions). No credentials are needed for NFS.
+  # --- Synology NAS (NFS, all shares, on-demand) ---------------------------
+  # autofs wildcard map: accessing /mnt/nas/<name> automounts
+  # <NAS>:/volume1/<name> on demand, so *every* shared folder is reachable
+  # without listing them here. Mounts are made lazily on first access and
+  # unmounted after 10 min idle, so a host never blocks boot (or hangs) if the
+  # NAS is offline. No credentials are needed for NFS.
   #
-  # Fill in the three placeholders below for your setup:
-  #   <NAS>          e.g. "synology.tailnet-name.ts.net" or "192.168.1.20"
-  #   <EXPORT-PATH>  the NFS export, e.g. "/volume1/common"
-  #   <MOUNT-POINT>  where it appears locally, e.g. "/mnt/nas"
-  fileSystems."/mnt/nas" = {
-    device = "<NAS>:/volume1/common";
-    fsType = "nfs";
-    options = [
-      "nfsvers=4.1"
-      "noauto" # don't mount at boot; let the automount unit handle it
-      "x-systemd.automount" # mount on first access
-      "x-systemd.idle-timeout=600" # unmount after 10 min idle
-      "x-systemd.mount-timeout=10s" # give up quickly if the NAS is down
-      "_netdev" # it's a network filesystem (ordered after network)
-    ];
+  # Synology exports each shared folder individually (there is no `/volume1`
+  # export), so for a folder to actually mount it must have an NFS rule
+  # permitting this host: Control Panel → Shared Folder → <share> → Edit →
+  # NFS Permissions → add the host's IP/subnet (or the tailnet range
+  # 100.64.0.0/10 if mounting over Tailscale).
+  #
+  # Note: a wildcard automount can't be browsed with `ls /mnt/nas` — you have
+  # to reference a folder by name (e.g. `cd /mnt/nas/photos`) to trigger it.
+  #
+  # Set <NAS> below to the NAS address, e.g. "synology.<tailnet>.ts.net" or a
+  # LAN IP like "192.168.1.20".
+  services.autofs = {
+    enable = true;
+    autoMaster =
+      let
+        nasMap = pkgs.writeText "auto.nas" ''
+          * -fstype=nfs4,rw,nfsvers=4.1,soft <NAS>:/volume1/&
+        '';
+      in
+      ''
+        /mnt/nas file:${nasMap} --timeout=600
+      '';
   };
 
   # --- Secrets (sops-nix) ---------------------------------------------------
