@@ -111,6 +111,9 @@ Configured in `modules/common.nix` (`system.autoUpgrade`):
 
 - Pulls `github:ryanpeach-homelab/homelab#<hostname>` daily at ~04:00
   (+ randomized delay).
+- **Also pulls + rebuilds ~2 min after every boot** (`OnBootSec` on the
+  `nixos-upgrade` timer), so a reboot doubles as a "reimage": power-cycle a host
+  and it converges on the latest locked flake on `main`.
 - Uses the repo's committed `flake.lock` (no input re-resolution), so upgrades
   are reproducible.
 - `allowReboot = false` by default — kernel/initrd changes apply on the next
