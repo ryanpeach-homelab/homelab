@@ -12,10 +12,10 @@ their configuration from this repo via a GitOps, **pull-after-CI** workflow:
 
 ## Hosts
 
-| Host             | Architecture    | Notes                          |
-| ---------------- | --------------- | ------------------------------ |
-| `rgpeach10-mini` | `x86_64-linux`  | mini PC, runs ollama (tailnet) |
-| `rgpeach10-pi1`  | `aarch64-linux` | Raspberry Pi                   |
+| Host             | Architecture    | Notes                               |
+| ---------------- | --------------- | ----------------------------------- |
+| `rgpeach10-mini` | `x86_64-linux`  | mini PC, ollama via tailscale serve |
+| `rgpeach10-pi1`  | `aarch64-linux` | Raspberry Pi                        |
 
 Hosts and their architectures are declared in `flake.nix` (the `hosts`
 attribute set). Add a host by adding an entry there and a directory under
