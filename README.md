@@ -103,16 +103,18 @@ Then, **per host**:
 podman containers/systemd units (podman is used rather than the host's docker
 daemon, which is `enableOnBoot = false` for the devcontainer workflow):
 
-| Piece                      | Source (built on host from fork) | Exposure                                            |
-| -------------------------- | -------------------------------- | --------------------------------------------------- |
-| `super-productivity` (web) | `ryanpeach-homelab/super-productivity` | `tailscale serve`, HTTPS **:10000**, tailnet-only |
-| `mcp-auth-proxy`           | `ryanpeach-homelab/mcp-auth-proxy`     | `tailscale funnel`, HTTPS **:8443**, public      |
+| Piece                      | Source                                 | Exposure                                            |
+| -------------------------- | -------------------------------------- | --------------------------------------------------- |
+| `super-productivity` (web) | Docker Hub `rgpeach10/super-productivity` (published by the fork's CI) | `tailscale serve`, HTTPS **:10000**, tailnet-only |
+| `mcp-auth-proxy`           | built on-host from `ryanpeach-homelab/mcp-auth-proxy` | `tailscale funnel`, HTTPS **:8443**, public |
 | `Super-Productivity-MCP`   | `ryanpeach-homelab/Super-Productivity-MCP` (via `npx github:`) | wrapped by the proxy as a stdio child |
 
-The images are built **on the host** from the forks (`git clone` + `podman
-build`) the first time each unit starts, so the box needs outbound access to
-GitHub and npm. CI only builds the NixOS closure — it never runs podman — so the
-on-host build cost doesn't affect the merge gate.
+`super-productivity` is **pulled** from Docker Hub (the fork's CI builds and
+publishes it). `mcp-auth-proxy` has no published image yet, so it's still
+**built on-host** from the fork (`git clone` + `podman build`) on first start —
+once its CI publishes an image, switch it to a pull too. Either way the box
+needs outbound access (Docker Hub / GitHub / npm). CI here only builds the NixOS
+closure — it never runs podman — so none of this affects the merge gate.
 
 The proxy's public URL is derived at runtime from the node's MagicDNS name, so
 the tailnet is never hard-coded. The mini advertises itself as `ollama`

@@ -41,15 +41,30 @@ let
   serveHttpsPort = 10000;
   funnelHttpsPort = 8443;
 
-  # Locally-built image tags. The `localhost/` prefix tells podman these are
-  # local-only, so `podman run` never tries to pull them from a registry.
-  spImage = "localhost/super-productivity:latest";
+  # super-productivity is pulled from Docker Hub, where the fork's CI publishes
+  # it. mcp-auth-proxy has no published image yet, so it's still built on-host
+  # from the fork (the `localhost/` prefix marks it local-only — podman won't
+  # try to pull it).
+  spImage = "docker.io/rgpeach10/super-productivity:latest";
   proxyImage = "localhost/mcp-auth-proxy:latest";
 
   ts = "${config.services.tailscale.package}/bin/tailscale";
   jq = "${pkgs.jq}/bin/jq";
   podman = "${pkgs.podman}/bin/podman";
   git = "${pkgs.git}/bin/git";
+
+  # Pull $image (built + published by the source repo's own CI) and drop any
+  # stale container of $name so ExecStart can recreate it. If the pull fails but
+  # the image is already present, we keep it so a transient network blip at boot
+  # doesn't take the service down.
+  pullImage = image: name: ''
+    set -u
+    if ! ${podman} pull "${image}"; then
+      echo "pull of ${image} failed; falling back to existing image if present" >&2
+      ${podman} image exists "${image}"
+    fi
+    ${podman} rm -f "${name}" || true
+  '';
 
   # Clone (or update) a GitHub repo at $src and `podman build` it into $tag,
   # then drop any stale container of $name so ExecStart can recreate it. If the
@@ -155,16 +170,15 @@ in
   systemd.services = {
     # --- super-productivity (private, tailnet-only) -------------------------
     super-productivity = {
-      description = "Super Productivity web app (built from fork, run via podman)";
+      description = "Super Productivity web app (Docker Hub image, run via podman)";
       wantedBy = [ "multi-user.target" ];
       after = [ "network-online.target" ];
       wants = [ "network-online.target" ];
 
-      preStart = buildFromGit "https://github.com/ryanpeach-homelab/super-productivity" "/var/lib/super-productivity/src" spImage "super-productivity";
+      preStart = pullImage spImage "super-productivity";
 
       serviceConfig = {
-        StateDirectory = "super-productivity";
-        TimeoutStartSec = "30min"; # the Angular build can take a while
+        TimeoutStartSec = "10min"; # allow time for the image pull
         Restart = "on-failure";
         RestartSec = "10s";
         ExecStart = spStart;
