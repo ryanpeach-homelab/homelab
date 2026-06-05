@@ -14,7 +14,7 @@ their configuration from this repo via a GitOps, **pull-after-CI** workflow:
 
 | Host             | Architecture    | Notes                          |
 | ---------------- | --------------- | ------------------------------ |
-| `rgpeach10-mini` | `x86_64-linux`  | mini PC, runs ollama (tailnet) |
+| `rgpeach10-mini` | `x86_64-linux`  | mini PC — ollama (tailnet), Super Productivity stack |
 | `rgpeach10-pi1`  | `aarch64-linux` | Raspberry Pi                   |
 
 Hosts and their architectures are declared in `flake.nix` (the `hosts`
@@ -95,6 +95,59 @@ Then, **per host**:
    nixos-rebuild switch --flake .#<host> \             # remotely
      --target-host root@<host>.tailnet
    ```
+
+## Super Productivity stack (mini)
+
+`hosts/rgpeach10-mini/super-productivity.nix` self-hosts three pieces, all as
+podman containers/systemd units (podman is used rather than the host's docker
+daemon, which is `enableOnBoot = false` for the devcontainer workflow):
+
+| Piece                      | Source (built on host from fork) | Exposure                                            |
+| -------------------------- | -------------------------------- | --------------------------------------------------- |
+| `super-productivity` (web) | `ryanpeach-homelab/super-productivity` | `tailscale serve`, HTTPS **:443**, tailnet-only |
+| `mcp-auth-proxy`           | `ryanpeach-homelab/mcp-auth-proxy`     | `tailscale funnel`, HTTPS **:8443**, public      |
+| `Super-Productivity-MCP`   | `ryanpeach-homelab/Super-Productivity-MCP` (via `npx github:`) | wrapped by the proxy as a stdio child |
+
+The images are built **on the host** from the forks (`git clone` + `podman
+build`) the first time each unit starts, so the box needs outbound access to
+GitHub and npm. CI only builds the NixOS closure — it never runs podman — so the
+on-host build cost doesn't affect the merge gate.
+
+The proxy's public URL is derived at runtime from the node's MagicDNS name, so
+the tailnet is never hard-coded: `https://<mini>.<tailnet>.ts.net:8443`.
+
+### One-time operator setup
+
+1. **Tailnet** (admin console): enable **MagicDNS + HTTPS certificates**, and
+   allow **Funnel** for `rgpeach10-mini` in the ACL policy (`nodeAttrs` →
+   `funnel`).
+2. **GitHub OAuth app** (Settings → Developer settings → OAuth Apps):
+   - Homepage URL: `https://<mini>.<tailnet>.ts.net:8443`
+   - Authorization callback URL: same origin (see the proxy logs on first start
+     for the exact callback path it advertises).
+   - Note the **Client ID** and generate a **Client secret**.
+3. **Secret** — store the proxy's env as `mcp-auth-proxy-env` in the per-host
+   sops file (the service loads it as an `EnvironmentFile`). Until this file
+   exists the service still builds and starts, but won't authenticate anyone:
+   ```sh
+   sops secrets/rgpeach10-mini.yaml
+   ```
+   ```yaml
+   mcp-auth-proxy-env: |
+     GITHUB_CLIENT_ID=<client id>
+     GITHUB_CLIENT_SECRET=<client secret>
+     GITHUB_ALLOWED_USERS=<your-github-username>
+   ```
+   (Requires real age recipients in `.sops.yaml` first — see
+   [`secrets/README.md`](secrets/README.md).)
+
+> **Data caveat:** `Super-Productivity-MCP` reads task data from a local data
+> directory that the Super Productivity *plugin* populates. That plugin runs in
+> the **browser/desktop app**, not in the headless web container — so the
+> server-side MCP instance does not automatically see the data you enter in the
+> self-hosted web app. Hosting all three is wired up here; sharing live data
+> between them is a separate concern (e.g. running the plugin against the
+> server's `SP_MCP_DATA_DIR`, or a sync setup).
 
 ## Enforcing the CI gate
 

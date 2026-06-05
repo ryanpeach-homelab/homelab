@@ -1,7 +1,10 @@
 # rgpeach10-mini — x86_64 mini PC.
 { pkgs, ... }:
 {
-  imports = [ ./hardware-configuration.nix ];
+  imports = [
+    ./hardware-configuration.nix
+    ./super-productivity.nix
+  ];
 
   # EFI / systemd-boot.
   boot.loader.systemd-boot.enable = true;
