@@ -37,8 +37,9 @@
     dates = "04:00";
     randomizedDelaySec = "45min";
     # Flip to true (and set a reboot window) if you want kernel/initrd updates
-    # to take effect automatically.
-    allowReboot = false;
+    # to take effect automatically. mkDefault so individual hosts can opt in
+    # (e.g. rgpeach10-mini does, see hosts/rgpeach10-mini/default.nix).
+    allowReboot = lib.mkDefault false;
   };
 
   # --- Remote access --------------------------------------------------------
