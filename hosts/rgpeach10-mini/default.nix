@@ -5,7 +5,11 @@ let
   tailscale = config.services.tailscale.package;
 in
 {
-  imports = [ ./hardware-configuration.nix ];
+  imports = [
+    ./hardware-configuration.nix
+    ./super-productivity.nix
+    ./supersync.nix
+  ];
 
   # EFI / systemd-boot.
   boot.loader.systemd-boot.enable = true;
