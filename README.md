@@ -106,15 +106,15 @@ daemon, which is `enableOnBoot = false` for the devcontainer workflow):
 | Piece                      | Source                                 | Exposure                                            |
 | -------------------------- | -------------------------------------- | --------------------------------------------------- |
 | `super-productivity` (web) | Docker Hub `rgpeach10/super-productivity` (published by the fork's CI) | `tailscale serve`, HTTPS **:10000**, tailnet-only |
-| `mcp-auth-proxy`           | built on-host from `ryanpeach-homelab/mcp-auth-proxy` | `tailscale funnel`, HTTPS **:8443**, public |
+| `mcp-auth-proxy`           | GHCR `ghcr.io/sigbit/mcp-auth-proxy` (upstream) | `tailscale funnel`, HTTPS **:8443**, public |
 | `Super-Productivity-MCP`   | `ryanpeach-homelab/Super-Productivity-MCP` (via `npx github:`) | wrapped by the proxy as a stdio child |
 
-`super-productivity` is **pulled** from Docker Hub (the fork's CI builds and
-publishes it). `mcp-auth-proxy` has no published image yet, so it's still
-**built on-host** from the fork (`git clone` + `podman build`) on first start —
-once its CI publishes an image, switch it to a pull too. Either way the box
-needs outbound access (Docker Hub / GitHub / npm). CI here only builds the NixOS
-closure — it never runs podman — so none of this affects the merge gate.
+Both container images are **pulled** from registries — `super-productivity`
+from Docker Hub (the fork's CI publishes it) and `mcp-auth-proxy` from upstream's
+GHCR. The proxy image ships node/npm, so it launches the MCP server in-process
+via `npx`. The box needs outbound access (Docker Hub / GHCR / GitHub / npm). CI
+here only builds the NixOS closure — it never runs podman — so none of this
+affects the merge gate.
 
 The proxy's public URL is derived at runtime from the node's MagicDNS name, so
 the tailnet is never hard-coded. The mini advertises itself as `ollama`
