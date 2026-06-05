@@ -79,6 +79,30 @@
 
   networking.firewall.enable = true;
 
+  # --- Synology NAS (NFS, on-demand) ---------------------------------------
+  # Mounted lazily via systemd automount: the share is only mounted on first
+  # access and unmounted after a period of inactivity, so a host never blocks
+  # boot (or hangs) if the NAS is unreachable. Requires the NFS export on the
+  # Synology to permit each host's IP/subnet (Control Panel → Shared Folder →
+  # Edit → NFS Permissions). No credentials are needed for NFS.
+  #
+  # Fill in the three placeholders below for your setup:
+  #   <NAS>          e.g. "synology.tailnet-name.ts.net" or "192.168.1.20"
+  #   <EXPORT-PATH>  the NFS export, e.g. "/volume1/common"
+  #   <MOUNT-POINT>  where it appears locally, e.g. "/mnt/nas"
+  fileSystems."/mnt/nas" = {
+    device = "<NAS>:/volume1/common";
+    fsType = "nfs";
+    options = [
+      "nfsvers=4.1"
+      "noauto" # don't mount at boot; let the automount unit handle it
+      "x-systemd.automount" # mount on first access
+      "x-systemd.idle-timeout=600" # unmount after 10 min idle
+      "x-systemd.mount-timeout=10s" # give up quickly if the NAS is down
+      "_netdev" # it's a network filesystem (ordered after network)
+    ];
+  };
+
   # --- Secrets (sops-nix) ---------------------------------------------------
   # Each host decrypts secrets with an age key derived from its SSH ed25519
   # host key, so there is no separate key to distribute. Encrypt secrets with
