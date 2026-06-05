@@ -2,15 +2,15 @@
 #
 # Three pieces are wired up here:
 #
-#   1. super-productivity   — the web app, built from the ryanpeach-homelab
-#                             fork and served *privately* over the tailnet via
-#                             `tailscale serve` (HTTPS, tailnet-only).
-#   2. mcp-auth-proxy       — an OAuth 2.1 gateway, built from the fork. It
-#                             wraps the stdio MCP server below and exposes it as
-#                             an authenticated HTTPS `/mcp` endpoint.
-#   3. Super-Productivity-MCP — the stdio MCP server, launched by the proxy as a
-#                             child process via `npx` (the proxy image ships
-#                             node + npm, so this works inside the container).
+#   1. super-productivity   — the web app (Docker Hub image rgpeach10/…), served
+#                             *privately* over the tailnet via `tailscale serve`
+#                             (HTTPS, tailnet-only).
+#   2. mcp-auth-proxy       — an OAuth 2.1 gateway (upstream ghcr.io/sigbit/…).
+#                             It wraps the stdio MCP server below and exposes it
+#                             as an authenticated HTTPS `/mcp` endpoint.
+#   3. SP-MCP (organicmoron) — a single-file Python stdio MCP server, launched by
+#                             the proxy as a child process (the proxy image ships
+#                             python3 + pip, so this works inside the container).
 #
 # The proxy is published to the public internet with `tailscale funnel`, so
 # GitHub OAuth (configured via the sops secret below) is what keeps it locked
@@ -43,8 +43,8 @@ let
 
   # Both images are pulled from registries (not built on-host): super-productivity
   # from Docker Hub (the fork's CI publishes it) and mcp-auth-proxy from upstream's
-  # GitHub Container Registry. The proxy image is debian-slim with node/npm baked
-  # in, so it launches the stdio MCP server via npx exactly as upstream documents.
+  # GitHub Container Registry. The proxy image is debian-slim with python3/pip (and
+  # node) baked in, so it can launch the Python SP-MCP server inside the container.
   spImage = "docker.io/rgpeach10/super-productivity:latest";
   proxyImage = "ghcr.io/sigbit/mcp-auth-proxy:latest";
 
@@ -74,6 +74,25 @@ let
     done
   '';
 
+  # The MCP server the proxy wraps: organicmoron/SP-MCP, a single-file *Python*
+  # stdio server (not an npm package). The sigbit proxy image already bundles
+  # python3 / pip / curl, so this bootstrap — bind-mounted into the container and
+  # run as the proxy's stdio child — installs the `mcp` SDK into the persistent
+  # /data volume (once), fetches mcp_server.py, then execs it. XDG_DATA_HOME=/data
+  # puts the server's plugin_commands/ + plugin_responses/ exchange dirs on the
+  # volume too, so they survive container recreation.
+  spMcpBootstrap = pkgs.writeShellScript "sp-mcp-bootstrap" ''
+    set -eu
+    d=/data/sp-mcp
+    mkdir -p "$d/deps"
+    if [ ! -e "$d/deps/mcp" ]; then
+      pip3 install --quiet --break-system-packages --target="$d/deps" mcp
+    fi
+    curl -fsSL https://raw.githubusercontent.com/organicmoron/SP-MCP/main/mcp_server.py \
+      -o "$d/mcp_server.py"
+    exec env PYTHONPATH="$d/deps" XDG_DATA_HOME=/data python3 "$d/mcp_server.py"
+  '';
+
   # ExecStart wrapper for the proxy. EXTERNAL_URL is derived at *runtime* from
   # this node's MagicDNS name (so the tailnet is never hard-coded) — it can't
   # come from an EnvironmentFile because systemd evaluates those before the
@@ -89,19 +108,20 @@ let
 
     # --listen :80   : serve plain HTTP inside the container
     # --no-auto-tls  : funnel terminates TLS, so don't provision Let's Encrypt
-    # -- npx ...     : the stdio MCP server the proxy authenticates in front of
+    # -- sh ...      : the stdio MCP server the proxy authenticates in front of
+    #                  (organicmoron/SP-MCP, bootstrapped by the script above)
     exec ${podman} run --rm --name mcp-auth-proxy \
       -p 127.0.0.1:${toString proxyPort}:80 \
       -v /var/lib/mcp-auth-proxy/data:/data \
+      -v ${spMcpBootstrap}:/usr/local/bin/sp-mcp-bootstrap:ro \
       -e DATA_PATH=/data \
-      -e SP_MCP_DATA_DIR=/data/super-productivity \
       -e EXTERNAL_URL="$ext" \
       -e GITHUB_CLIENT_ID \
       -e GITHUB_CLIENT_SECRET \
       -e GITHUB_ALLOWED_USERS \
       ${proxyImage} \
       --listen :80 --no-auto-tls \
-      -- npx -y github:ryanpeach-homelab/Super-Productivity-MCP
+      -- sh /usr/local/bin/sp-mcp-bootstrap
   '';
 
   spStart = pkgs.writeShellScript "super-productivity-start" ''
@@ -163,9 +183,9 @@ in
       };
     };
 
-    # --- mcp-auth-proxy + Super-Productivity-MCP (public via funnel) --------
+    # --- mcp-auth-proxy + SP-MCP (public via funnel) -----------------------
     mcp-auth-proxy = {
-      description = "mcp-auth-proxy (upstream image) wrapping Super-Productivity-MCP";
+      description = "mcp-auth-proxy (upstream image) wrapping organicmoron/SP-MCP";
       wantedBy = [ "multi-user.target" ];
       # tailscaled-set applies `--hostname=ollama` (default.nix); wait for it so
       # the MagicDNS name is settled before proxyStart derives EXTERNAL_URL.

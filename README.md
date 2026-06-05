@@ -107,14 +107,15 @@ daemon, which is `enableOnBoot = false` for the devcontainer workflow):
 | -------------------------- | -------------------------------------- | --------------------------------------------------- |
 | `super-productivity` (web) | Docker Hub `rgpeach10/super-productivity` (published by the fork's CI) | `tailscale serve`, HTTPS **:10000**, tailnet-only |
 | `mcp-auth-proxy`           | GHCR `ghcr.io/sigbit/mcp-auth-proxy` (upstream) | `tailscale funnel`, HTTPS **:8443**, public |
-| `Super-Productivity-MCP`   | `ryanpeach-homelab/Super-Productivity-MCP` (via `npx github:`) | wrapped by the proxy as a stdio child |
+| `SP-MCP` (Python)          | `organicmoron/SP-MCP` (fetched at runtime) | wrapped by the proxy as a stdio child |
 
 Both container images are **pulled** from registries — `super-productivity`
 from Docker Hub (the fork's CI publishes it) and `mcp-auth-proxy` from upstream's
-GHCR. The proxy image ships node/npm, so it launches the MCP server in-process
-via `npx`. The box needs outbound access (Docker Hub / GHCR / GitHub / npm). CI
-here only builds the NixOS closure — it never runs podman — so none of this
-affects the merge gate.
+GHCR. The proxy image also ships python3/pip, so it launches the Python MCP
+server (`organicmoron/SP-MCP`) in-process: a small bootstrap installs the `mcp`
+SDK into the data volume and fetches `mcp_server.py` at startup. The box needs
+outbound access (Docker Hub / GHCR / GitHub raw / PyPI). CI here only builds the
+NixOS closure — it never runs podman — so none of this affects the merge gate.
 
 The proxy's public URL is derived at runtime from the node's MagicDNS name, so
 the tailnet is never hard-coded. The mini advertises itself as `ollama`
@@ -148,13 +149,14 @@ the private web app is `https://ollama.<tailnet>.ts.net:10000`.
    (Requires the mini's real age recipient in [`.sops.yaml`](.sops.yaml) — it's
    still a placeholder there until the host is reachable.)
 
-> **Data caveat:** `Super-Productivity-MCP` reads task data from a local data
-> directory that the Super Productivity *plugin* populates. That plugin runs in
-> the **browser/desktop app**, not in the headless web container — so the
+> **Data caveat:** `SP-MCP` exchanges data with Super Productivity through
+> file-based `plugin_commands/` + `plugin_responses/` dirs (under the container's
+> `XDG_DATA_HOME=/data`) that its **plugin** writes. That plugin runs in the
+> **browser/desktop app**, not in the headless web container — so the
 > server-side MCP instance does not automatically see the data you enter in the
 > self-hosted web app. Hosting all three is wired up here; sharing live data
-> between them is a separate concern (e.g. running the plugin against the
-> server's `SP_MCP_DATA_DIR`, or a sync setup).
+> between them is a separate concern (e.g. pointing the plugin at the server's
+> data dir, or a sync setup).
 
 ## Enforcing the CI gate
 
