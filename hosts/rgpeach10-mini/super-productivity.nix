@@ -34,10 +34,11 @@ let
   spPort = 3210; # super-productivity web  (container :80)
   proxyPort = 9000; # mcp-auth-proxy          (container :80)
 
-  # tailscale serve/funnel HTTPS ports. serve uses the standard 443 (tailnet
-  # only); funnel must use one of tailscale's funnel-able ports (443/8443/10000)
-  # and 443 is already taken by serve, so the public MCP endpoint lives on 8443.
-  serveHttpsPort = 443;
+  # tailscale serve/funnel HTTPS ports. The mini already runs `tailscale serve`
+  # for ollama on 443 (see default.nix), and a node shares one set of serve
+  # ports — so super-productivity's private serve uses 10000 and the public MCP
+  # funnel uses 8443 (both valid Funnel ports; the trio is 443/8443/10000).
+  serveHttpsPort = 10000;
   funnelHttpsPort = 8443;
 
   # Locally-built image tags. The `localhost/` prefix tells podman these are
@@ -119,14 +120,25 @@ let
   '';
 
   # The encrypted per-host secrets file is created by the operator out-of-band
-  # (see the note at the bottom of this file). Only wire up the sops secret once
-  # it exists, so CI — which has no such file and never decrypts — still builds.
-  secretsFile = ../../secrets/rgpeach10-mini.yaml;
+  # (see the note at the bottom of this file). It lives under hosts/<host>/ to
+  # match the `path_regex: hosts/rgpeach10-mini` rule in .sops.yaml. Only wire up
+  # the sops secret once it exists, so CI — which has no such file and never
+  # decrypts — still builds.
+  secretsFile = ./secrets.yaml;
   haveSecrets = builtins.pathExists secretsFile;
 in
 {
   # podman as a daemonless container runtime for the long-running services.
   virtualisation.podman.enable = true;
+
+  # serve/funnel terminate TLS on these ports on the tailscale0 interface, so
+  # the firewall has to let them through there (the same reason default.nix
+  # opens 443 for the ollama serve; this option is list-valued, so the two
+  # definitions merge). Funnel ingress also lands on tailscale0.
+  networking.firewall.interfaces."tailscale0".allowedTCPPorts = [
+    funnelHttpsPort
+    serveHttpsPort
+  ];
 
   # GitHub OAuth credentials for the proxy, decrypted to
   # /run/secrets/mcp-auth-proxy-env as a systemd EnvironmentFile (dotenv:
@@ -164,13 +176,17 @@ in
     mcp-auth-proxy = {
       description = "mcp-auth-proxy wrapping Super-Productivity-MCP (built from fork)";
       wantedBy = [ "multi-user.target" ];
+      # tailscaled-set applies `--hostname=ollama` (default.nix); wait for it so
+      # the MagicDNS name is settled before proxyStart derives EXTERNAL_URL.
       after = [
         "network-online.target"
         "tailscaled.service"
+        "tailscaled-set.service"
       ];
       wants = [
         "network-online.target"
         "tailscaled.service"
+        "tailscaled-set.service"
       ];
 
       preStart = buildFromGit "https://github.com/ryanpeach-homelab/mcp-auth-proxy" "/var/lib/mcp-auth-proxy/src" proxyImage "mcp-auth-proxy";
@@ -195,9 +211,13 @@ in
       wantedBy = [ "multi-user.target" ];
       after = [
         "tailscaled.service"
+        "tailscaled-set.service"
         "super-productivity.service"
       ];
-      wants = [ "tailscaled.service" ];
+      wants = [
+        "tailscaled.service"
+        "tailscaled-set.service"
+      ];
 
       serviceConfig = {
         Type = "oneshot";
@@ -219,9 +239,13 @@ in
       wantedBy = [ "multi-user.target" ];
       after = [
         "tailscaled.service"
+        "tailscaled-set.service"
         "mcp-auth-proxy.service"
       ];
-      wants = [ "tailscaled.service" ];
+      wants = [
+        "tailscaled.service"
+        "tailscaled-set.service"
+      ];
 
       serviceConfig = {
         Type = "oneshot";

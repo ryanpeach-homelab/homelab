@@ -42,6 +42,15 @@
     allowReboot = lib.mkDefault false;
   };
 
+  # Also re-pull + rebuild shortly after every boot — not just on the daily
+  # timer above. This turns a reboot into a "reimage": power-cycle a host and it
+  # fetches the latest locked flake from GitHub and rebuilds itself to match.
+  # The autoUpgrade module creates `nixos-upgrade.{service,timer}`; we extend
+  # that timer with an extra OnBootSec trigger (merged into its existing
+  # OnCalendar config). The service already waits on network-online.target, so
+  # the 2min delay is just slack for tailscale/DNS to settle before the pull.
+  systemd.timers.nixos-upgrade.timerConfig.OnBootSec = "2min";
+
   # --- Remote access --------------------------------------------------------
   services.tailscale.enable = true;
 

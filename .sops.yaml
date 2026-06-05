@@ -1,38 +1,55 @@
-# sops creation rules: which age recipients can decrypt which files.
+# sops creation rules: which recipients can decrypt which files.
 #
-# Populate the keys below, then encrypt with `sops secrets/<file>.yaml`.
+# Admin is encrypted to a PGP key (portable, lives in your gpg keyring).
+# Hosts are encrypted to age recipients derived from each host's SSH
+# ed25519 *public* host key, so there is no separate key to distribute.
 #
-# Get a host's age recipient from its SSH ed25519 *public* host key:
+# Get a host's age recipient:
 #   ssh-keyscan <host> 2>/dev/null | ssh-to-age
-#   # or, on the host itself:
+#   # or on the host itself:
 #   ssh-to-age -i /etc/ssh/ssh_host_ed25519_key.pub
 #
-# Get your personal admin recipient from your age key:
-#   age-keygen -o ~/.config/sops/age/keys.txt   # one-time; prints age1... public key
+# Find your PGP fingerprint:
+#   gpg --list-secret-keys --keyid-format=long
+#   # use the 40-char fingerprint under `sec`.
 
 keys:
-  # Replace these placeholders with real age recipients (age1...).
-  - &admin    age1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxadmin
-  - &mini     age1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxmini0
-  - &pi1      age1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxpi100
+  # Admin (PGP) — rgpeach10 <me@ryanpeach.com>
+  - &admin_pgp C3238691F8B983AB1ED09984F394946CED79E325
+
+  # Hosts (age, derived from each host's ed25519 ssh host key)
+  - &nas       age1g3nw45djfcdcgu2th8recwf060avlzg8qu6kp8de58rnxzzyludq4ksuld
+  # TODO: replace placeholders below once mini/pi1 are reachable.
+  - &mini      age1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxmini0
+  - &pi1       age1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxpi100
 
 creation_rules:
   # Secrets every host needs.
   - path_regex: secrets/common\.yaml$
     key_groups:
-      - age:
-          - *admin
+      - pgp:
+          - *admin_pgp
+        age:
+          - *nas
           - *mini
           - *pi1
 
   # Per-host secrets: secrets/<hostname>.yaml decrypts only on that host.
-  - path_regex: secrets/rgpeach10-mini\.yaml$
+  - path_regex: hosts/nas/
     key_groups:
-      - age:
-          - *admin
+      - pgp:
+          - *admin_pgp
+        age:
+          - *nas
+  - path_regex: hosts/rgpeach10-mini
+    key_groups:
+      - pgp:
+          - *admin_pgp
+        age:
           - *mini
-  - path_regex: secrets/rgpeach10-pi1\.yaml$
+  - path_regex: hosts/rgpeach10-pi1
     key_groups:
-      - age:
-          - *admin
+      - pgp:
+          - *admin_pgp
+        age:
           - *pi1
