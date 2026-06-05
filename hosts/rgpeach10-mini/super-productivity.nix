@@ -138,96 +138,100 @@ in
     };
   };
 
-  # --- super-productivity (private, tailnet-only) ---------------------------
-  systemd.services.super-productivity = {
-    description = "Super Productivity web app (built from fork, run via podman)";
-    wantedBy = [ "multi-user.target" ];
-    after = [ "network-online.target" ];
-    wants = [ "network-online.target" ];
+  # All four units live under a single `systemd.services` attrset (statix flags
+  # repeated top-level `systemd.services.<name>` keys).
+  systemd.services = {
+    # --- super-productivity (private, tailnet-only) -------------------------
+    super-productivity = {
+      description = "Super Productivity web app (built from fork, run via podman)";
+      wantedBy = [ "multi-user.target" ];
+      after = [ "network-online.target" ];
+      wants = [ "network-online.target" ];
 
-    preStart = buildFromGit "https://github.com/ryanpeach-homelab/super-productivity" "/var/lib/super-productivity/src" spImage "super-productivity";
+      preStart = buildFromGit "https://github.com/ryanpeach-homelab/super-productivity" "/var/lib/super-productivity/src" spImage "super-productivity";
 
-    serviceConfig = {
-      StateDirectory = "super-productivity";
-      TimeoutStartSec = "30min"; # the Angular build can take a while
-      Restart = "on-failure";
-      RestartSec = "10s";
-      ExecStart = spStart;
-      ExecStop = "${podman} stop -t 10 super-productivity";
+      serviceConfig = {
+        StateDirectory = "super-productivity";
+        TimeoutStartSec = "30min"; # the Angular build can take a while
+        Restart = "on-failure";
+        RestartSec = "10s";
+        ExecStart = spStart;
+        ExecStop = "${podman} stop -t 10 super-productivity";
+      };
     };
-  };
 
-  # --- mcp-auth-proxy + Super-Productivity-MCP (public via funnel) ----------
-  systemd.services.mcp-auth-proxy = {
-    description = "mcp-auth-proxy wrapping Super-Productivity-MCP (built from fork)";
-    wantedBy = [ "multi-user.target" ];
-    after = [
-      "network-online.target"
-      "tailscaled.service"
-    ];
-    wants = [
-      "network-online.target"
-      "tailscaled.service"
-    ];
+    # --- mcp-auth-proxy + Super-Productivity-MCP (public via funnel) --------
+    mcp-auth-proxy = {
+      description = "mcp-auth-proxy wrapping Super-Productivity-MCP (built from fork)";
+      wantedBy = [ "multi-user.target" ];
+      after = [
+        "network-online.target"
+        "tailscaled.service"
+      ];
+      wants = [
+        "network-online.target"
+        "tailscaled.service"
+      ];
 
-    preStart = buildFromGit "https://github.com/ryanpeach-homelab/mcp-auth-proxy" "/var/lib/mcp-auth-proxy/src" proxyImage "mcp-auth-proxy";
+      preStart = buildFromGit "https://github.com/ryanpeach-homelab/mcp-auth-proxy" "/var/lib/mcp-auth-proxy/src" proxyImage "mcp-auth-proxy";
 
-    serviceConfig = {
-      StateDirectory = "mcp-auth-proxy";
-      TimeoutStartSec = "30min";
-      Restart = "on-failure";
-      RestartSec = "10s";
-      # GitHub OAuth client id/secret + allowed users. Optional (`-`) so the
-      # unit still builds/starts before the secret is provided; the proxy just
-      # won't authenticate anyone useful until it exists.
-      EnvironmentFile = [ "-/run/secrets/mcp-auth-proxy-env" ];
-      ExecStart = proxyStart;
-      ExecStop = "${podman} stop -t 10 mcp-auth-proxy";
+      serviceConfig = {
+        StateDirectory = "mcp-auth-proxy";
+        TimeoutStartSec = "30min";
+        Restart = "on-failure";
+        RestartSec = "10s";
+        # GitHub OAuth client id/secret + allowed users. Optional (`-`) so the
+        # unit still builds/starts before the secret is provided; the proxy
+        # just won't authenticate anyone useful until it exists.
+        EnvironmentFile = [ "-/run/secrets/mcp-auth-proxy-env" ];
+        ExecStart = proxyStart;
+        ExecStop = "${podman} stop -t 10 mcp-auth-proxy";
+      };
     };
-  };
 
-  # --- tailscale serve: super-productivity, tailnet-only --------------------
-  systemd.services.ts-serve-super-productivity = {
-    description = "Expose super-productivity privately over the tailnet (tailscale serve)";
-    wantedBy = [ "multi-user.target" ];
-    after = [
-      "tailscaled.service"
-      "super-productivity.service"
-    ];
-    wants = [ "tailscaled.service" ];
+    # --- tailscale serve: super-productivity, tailnet-only -----------------
+    ts-serve-super-productivity = {
+      description = "Expose super-productivity privately over the tailnet (tailscale serve)";
+      wantedBy = [ "multi-user.target" ];
+      after = [
+        "tailscaled.service"
+        "super-productivity.service"
+      ];
+      wants = [ "tailscaled.service" ];
 
-    serviceConfig = {
-      Type = "oneshot";
-      RemainAfterExit = true;
+      serviceConfig = {
+        Type = "oneshot";
+        RemainAfterExit = true;
+      };
+      script = ''
+        ${waitForTailscale}
+        ${ts} serve --bg --https=${toString serveHttpsPort} http://127.0.0.1:${toString spPort}
+      '';
+      preStop = "${ts} serve --https=${toString serveHttpsPort} off || true";
     };
-    script = ''
-      ${waitForTailscale}
-      ${ts} serve --bg --https=${toString serveHttpsPort} http://127.0.0.1:${toString spPort}
-    '';
-    preStop = "${ts} serve --https=${toString serveHttpsPort} off || true";
-  };
 
-  # --- tailscale funnel: mcp-auth-proxy, public internet --------------------
-  # Prerequisites on the tailnet (one-time, in the admin console): HTTPS
-  # certificates + MagicDNS enabled, and Funnel allowed for this node in the
-  # ACL policy (the `nodeAttrs` / `funnel` attribute).
-  systemd.services.ts-funnel-mcp-auth-proxy = {
-    description = "Expose mcp-auth-proxy to the public internet (tailscale funnel)";
-    wantedBy = [ "multi-user.target" ];
-    after = [
-      "tailscaled.service"
-      "mcp-auth-proxy.service"
-    ];
-    wants = [ "tailscaled.service" ];
+    # --- tailscale funnel: mcp-auth-proxy, public internet -----------------
+    # Prerequisites on the tailnet (one-time, in the admin console): HTTPS
+    # certificates + MagicDNS enabled, and Funnel allowed for this node in the
+    # ACL policy (the `nodeAttrs` / `funnel` attribute).
+    ts-funnel-mcp-auth-proxy = {
+      description = "Expose mcp-auth-proxy to the public internet (tailscale funnel)";
+      wantedBy = [ "multi-user.target" ];
+      after = [
+        "tailscaled.service"
+        "mcp-auth-proxy.service"
+      ];
+      wants = [ "tailscaled.service" ];
 
-    serviceConfig = {
-      Type = "oneshot";
-      RemainAfterExit = true;
+      serviceConfig = {
+        Type = "oneshot";
+        RemainAfterExit = true;
+      };
+      script = ''
+        ${waitForTailscale}
+        ${ts} funnel --bg --https=${toString funnelHttpsPort} http://127.0.0.1:${toString proxyPort}
+      '';
+      preStop = "${ts} funnel --https=${toString funnelHttpsPort} off || true";
     };
-    script = ''
-      ${waitForTailscale}
-      ${ts} funnel --bg --https=${toString funnelHttpsPort} http://127.0.0.1:${toString proxyPort}
-    '';
-    preStop = "${ts} funnel --https=${toString funnelHttpsPort} off || true";
   };
 }
